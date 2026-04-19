@@ -2,7 +2,7 @@ name: YT-M3U8-Updater
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4   # ✅ UPDATED
 
       - name: Install yt-dlp
         run: |
@@ -22,9 +22,14 @@ jobs:
 
       - name: Fetch YouTube M3U8
         run: |
-          URL="https://www.youtube.com/watch?v=YGEgelAiUf0"
+          URL="https://www.youtube.com/watch?v=VIDEO_ID"
 
-          STREAM=$(yt-dlp -g -f "best[protocol=m3u8]" "$URL")
+          STREAM=$(yt-dlp -g -f "best[protocol=m3u8]" "$URL" || true)
+
+          if [ -z "$STREAM" ]; then
+            echo "Failed to fetch stream"
+            exit 0
+          fi
 
           echo "#EXTM3U" > manifest.m3u8
           echo "#EXTINF:-1,YouTube Live" >> manifest.m3u8
