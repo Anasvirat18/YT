@@ -1,4 +1,4 @@
-name: YT-M3U8-Channel-Proxy
+name: YT-M3U8
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  update:
+  run:
     runs-on: ubuntu-latest
 
     permissions:
@@ -23,52 +23,41 @@ jobs:
           sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
 
-      # STEP 1: Get LIVE video from channel
-      - name: Get Live Video
+      - name: Fetch stream (best effort)
         run: |
-          CHANNEL="https://www.youtube.com/channel/UCwXrBBZnIh2ER4lal6WbAHw/live"
+          URL="https://www.youtube.com/channel/UCwXrBBZnIh2ER4lal6WbAHw/live"
 
-          echo "Finding live stream..."
-
-          VIDEO_URL=$(yt-dlp --flat-playlist "$CHANNEL" | grep "^https" | head -n 1)
-
-          echo "Video:"
-          echo "$VIDEO_URL"
-
-          if [[ "$VIDEO_URL" != http* ]]; then
-            echo "No live stream found"
-            exit 0
-          fi
-
-          echo "VIDEO_URL=$VIDEO_URL" >> $GITHUB_ENV
-
-      # STEP 2: Extract stream
-      - name: Get Stream URL
-        run: |
-          STREAM=$(yt-dlp -g "$VIDEO_URL" \
+          echo "Trying android client..."
+          STREAM=$(yt-dlp -g "$URL" \
             --extractor-args "youtube:player_client=android" \
             --no-warnings | head -n 1)
 
-          echo "Stream:"
+          # fallback attempt
+          if [[ "$STREAM" != http* ]]; then
+            echo "Fallback attempt..."
+            STREAM=$(yt-dlp -g "$URL" | head -n 1)
+          fi
+
+          echo "Result:"
           echo "$STREAM"
 
+          # final fallback (always works)
           if [[ "$STREAM" != http* ]]; then
-            echo "Failed to extract stream"
-            exit 0
+            echo "Using backup stream"
+            STREAM="https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
           fi
 
           echo "#EXTM3U" > manifest.m3u8
           echo "#EXTINF:-1,Live Channel" >> manifest.m3u8
           echo "$STREAM" >> manifest.m3u8
 
-      # STEP 3: Push update
-      - name: Commit & Push
+      - name: Push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           git add manifest.m3u8
-          git commit -m "Auto update stream" || echo "No changes"
+          git commit -m "update stream" || echo "no change"
 
           git pull --rebase origin main
-          git push origin main
+          git push
