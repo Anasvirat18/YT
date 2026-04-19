@@ -13,20 +13,24 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4   # ✅ UPDATED
+      - uses: actions/checkout@v4
 
       - name: Install yt-dlp
         run: |
           sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
 
-      - name: Fetch YouTube M3U8
+      - name: Fetch YouTube Stream
         run: |
-          URL="https://www.youtube.com/watch?v=VIDEO_ID"
+          URL="https://www.youtube.com/watch?v=YGEgelAiUf0"
 
-          STREAM=$(yt-dlp -g -f "best[protocol=m3u8]" "$URL" || true)
+          echo "Fetching stream..."
+          STREAM=$(yt-dlp -g "$URL" | head -n 1)
 
-          if [ -z "$STREAM" ]; then
+          echo "Result:"
+          echo "$STREAM"
+
+          if [[ "$STREAM" != http* ]]; then
             echo "Failed to fetch stream"
             exit 0
           fi
