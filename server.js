@@ -5,24 +5,25 @@ const fetch = require("node-fetch");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔥 Add your channels here
+// 🔥 Use CHANNEL ID (not video link)
 const channels = {
-  yt1: "https://www.youtube.com/watch?v=YGEgelAiUf0"
+  yt1: "https://www.youtube.com/channel/UCwXrBBZnIh2ER4lal6WbAHw/live"
 };
 
 let streamCache = {};
 let updating = {};
 
-// 🔁 Update function (safe + controlled)
+// 🔁 Get LIVE stream from channel
 function updateChannel(id, url) {
-  if (updating[id]) return; // prevent duplicate calls
+  if (updating[id]) return;
   updating[id] = true;
 
-  exec(`./yt-dlp -f best -g "${url}"`, { timeout: 15000 }, (err, stdout) => {
+  // 👇 IMPORTANT: this fetches current LIVE video automatically
+  exec(`./yt-dlp -f best -g "${url}"`, { timeout: 20000 }, (err, stdout) => {
     updating[id] = false;
 
     if (err) {
-      console.log(`❌ Error updating ${id}`);
+      console.log(`❌ ${id} not live or error`);
       return;
     }
 
@@ -30,19 +31,21 @@ function updateChannel(id, url) {
 
     if (streamUrl && streamUrl.includes("m3u8")) {
       streamCache[id] = streamUrl;
-      console.log(`✅ Updated ${id}`);
+      console.log(`✅ Updated LIVE for ${id}`);
+    } else {
+      console.log(`⚠️ ${id} not live`);
     }
   });
 }
 
-// 🔁 Auto अपडेट loop (every 30 sec)
+// 🔁 Auto refresh
 setInterval(() => {
   for (let id in channels) {
     updateChannel(id, channels[id]);
   }
 }, 30000);
 
-// Run once at start
+// Run once
 for (let id in channels) {
   updateChannel(id, channels[id]);
 }
@@ -53,54 +56,42 @@ app.get("/:id.m3u8", async (req, res) => {
   const source = streamCache[id];
 
   if (!source) {
-    return res.send("⏳ Stream loading, try again...");
+    return res.send("⏳ Channel not live / loading...");
   }
 
   try {
-    const response = await fetch(source);
-    let text = await response.text();
+    const r = await fetch(source);
+    let text = await r.text();
 
-    // 🔥 Rewrite all URLs → proxy
-    text = text.replace(/https?:\/\/[^\n]+/g, (url) => {
-      return `/proxy?url=${encodeURIComponent(url)}`;
+    // rewrite URLs
+    text = text.replace(/https?:\/\/[^\n]+/g, (u) => {
+      return `/proxy?url=${encodeURIComponent(u)}`;
     });
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.send(text);
 
-  } catch (err) {
-    res.send("❌ Failed to load m3u8");
+  } catch {
+    res.send("❌ Failed to load stream");
   }
 });
 
-// 🎯 Proxy TS / segments
+// 🎯 Segment proxy
 app.get("/proxy", async (req, res) => {
   const url = req.query.url;
-
-  if (!url) {
-    return res.send("No URL");
-  }
+  if (!url) return res.send("No URL");
 
   try {
     const r = await fetch(url);
-
-    res.setHeader(
-      "Content-Type",
-      r.headers.get("content-type") || "application/octet-stream"
-    );
-
+    res.setHeader("Content-Type", r.headers.get("content-type"));
     r.body.pipe(res);
-
-  } catch (err) {
-    res.send("❌ Proxy error");
+  } catch {
+    res.send("Proxy error");
   }
 });
 
-// 🟢 Root check
 app.get("/", (req, res) => {
-  res.send("YT M3U8 Proxy Running ✅");
+  res.send("YT Channel Live Proxy Running ✅");
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log("🚀 Running"));
