@@ -5,118 +5,133 @@ const fetch = require("node-fetch");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔥 CHANNEL → LIVE URL
+// 🔥 Channel ID
 const channels = {
-  yt1: "https://www.youtube.com/channel/UCwXrBBZnIh2ER4lal6WbAHw/live"
+  yt1: "UCwXrBBZnIh2ER4lal6WbAHw"
 };
 
 let streamCache = {};
 let updating = {};
 
-// 🔁 Extract LIVE M3U8
-function updateChannel(id, url) {
-  if (updating[id]) return;
-  updating[id] = true;
+// 🔁 Step 1: Get LIVE video ID
+function getLiveVideoId(channelId, callback) {
+  const url = `https://www.youtube.com/channel/${channelId}/live`;
+
+  exec(`./yt-dlp --get-id "${url}"`, { timeout: 15000 }, (err, stdout) => {
+    if (err || !stdout) {
+      console.log("❌ Failed to get video ID");
+      return callback(null);
+    }
+
+    const videoId = stdout.trim();
+    console.log("🎯 Live Video ID:", videoId);
+
+    callback(videoId);
+  });
+}
+
+// 🔁 Step 2: Get M3U8 from video
+function getM3U8(videoId, callback) {
+  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
   exec(
-    `./yt-dlp -f "bv*+ba/b[protocol^=m3u8]" -g "${url}"`,
+    `./yt-dlp -f "bv*+ba/b[protocol^=m3u8]" -g "${videoUrl}"`,
     { timeout: 20000 },
-    (err, stdout, stderr) => {
-      updating[id] = false;
-
-      console.log(`\n🔍 Checking ${id}...`);
-
-      if (err) {
-        console.log("❌ yt-dlp error");
-        console.log(stderr);
-        return;
+    (err, stdout) => {
+      if (err || !stdout) {
+        console.log("❌ Failed to get m3u8");
+        return callback(null);
       }
 
       const lines = stdout.split("\n").filter(Boolean);
+      const m3u8 = lines.find((l) => l.includes("m3u8"));
 
-      console.log("OUTPUT:", lines);
+      console.log("M3U8:", m3u8);
 
-      // 🔥 Find m3u8 link
-      const streamUrl = lines.find((l) => l.includes("m3u8"));
-
-      if (streamUrl) {
-        streamCache[id] = streamUrl;
-        console.log("✅ M3U8 FOUND & UPDATED");
-      } else {
-        console.log("⚠️ No m3u8 found (maybe DASH only)");
-      }
+      callback(m3u8 || null);
     }
   );
 }
 
-// 🔁 AUTO REFRESH (30 sec)
+// 🔁 Update channel stream
+function updateChannel(id, channelId) {
+  if (updating[id]) return;
+  updating[id] = true;
+
+  getLiveVideoId(channelId, (videoId) => {
+    if (!videoId) {
+      updating[id] = false;
+      return;
+    }
+
+    getM3U8(videoId, (m3u8) => {
+      updating[id] = false;
+
+      if (m3u8) {
+        streamCache[id] = m3u8;
+        console.log(`✅ Updated ${id}`);
+      } else {
+        console.log(`⚠️ No m3u8 found`);
+      }
+    });
+  });
+}
+
+// 🔁 Auto refresh every 30 sec
 setInterval(() => {
   for (let id in channels) {
     updateChannel(id, channels[id]);
   }
 }, 30000);
 
-// Run once at start
+// Run once
 for (let id in channels) {
   updateChannel(id, channels[id]);
 }
 
-// 🎯 SERVE M3U8
+// 🎯 Serve M3U8
 app.get("/:id.m3u8", async (req, res) => {
   const id = req.params.id;
   const source = streamCache[id];
 
   if (!source) {
-    return res.send("⏳ Channel not live / loading...");
+    return res.send("⏳ Waiting for live stream...");
   }
 
   try {
-    const response = await fetch(source);
-    let text = await response.text();
+    const r = await fetch(source);
+    let text = await r.text();
 
-    // 🔥 Rewrite URLs → proxy
-    text = text.replace(/https?:\/\/[^\n]+/g, (url) => {
-      return `/proxy?url=${encodeURIComponent(url)}`;
+    // rewrite segment URLs
+    text = text.replace(/https?:\/\/[^\n]+/g, (u) => {
+      return `/proxy?url=${encodeURIComponent(u)}`;
     });
 
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.send(text);
-
-  } catch (err) {
-    console.log("❌ Error fetching m3u8");
-    res.send("Stream error");
+  } catch {
+    res.send("❌ Failed to load stream");
   }
 });
 
-// 🎯 PROXY TS SEGMENTS
+// 🎯 Proxy TS
 app.get("/proxy", async (req, res) => {
   const url = req.query.url;
-
-  if (!url) {
-    return res.send("No URL");
-  }
+  if (!url) return res.send("No URL");
 
   try {
     const r = await fetch(url);
-
-    res.setHeader(
-      "Content-Type",
-      r.headers.get("content-type") || "application/octet-stream"
-    );
-
+    res.setHeader("Content-Type", r.headers.get("content-type"));
     r.body.pipe(res);
-
-  } catch (err) {
-    console.log("❌ Proxy error");
-    res.send("Proxy failed");
+  } catch {
+    res.send("Proxy error");
   }
 });
 
-// 🟢 ROOT CHECK
 app.get("/", (req, res) => {
   res.send("YT LIVE PROXY RUNNING ✅");
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log("🚀 Server started");
 });
