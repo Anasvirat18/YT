@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: yt-m3u8-proxy
+    env: node
+    buildCommand: |
+      apt update && apt install -y python3-pip
+      pip install yt-dlp
+    startCommand: npm start
